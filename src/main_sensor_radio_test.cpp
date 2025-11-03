@@ -3,19 +3,17 @@
 // include CanSatKit library used for pressure sensor
 #include <CanSatKit.h>
 
-using namespace CanSatKit;
-
 #define BLINKING 0
 
 bool led_state = false;
 const int led_pin = 13;
 
-Radio radio(Pins::Radio::ChipSelect,
-            Pins::Radio::DIO0,
+CanSatKit::Radio radio(CanSatKit::Pins::Radio::ChipSelect,
+            CanSatKit::Pins::Radio::DIO0,
             433.0,
-            Bandwidth_125000_Hz,
-            SpreadingFactor_9,
-            CodingRate_4_8);
+            CanSatKit::Bandwidth_125000_Hz,
+            CanSatKit::SpreadingFactor_9,
+            CanSatKit::CodingRate_4_8);
 
 // BMP280 is a pressure sensor, create the sensor object
 CanSatKit::BMP280 bmp;
