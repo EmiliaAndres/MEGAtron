@@ -1,0 +1,15 @@
+#include "protocol.h" // Deklares struct Frame
+#include <CANSAT_Radio.h> // Deklares class Frame
+
+Can sat library has been copied and edited, so as avoid collisions with keyword - "Frame" in space_protocol library.
+Class "Frame" Has been renamed to "CansatFrame"
+
+
+Also a change in default module configuration has been made:
+IN CANSAT LIBRARY.cpp!:
+change in 347th line
+from
+write_register(SX1278_REG_MODEM_CONFIG_3, SX1278_LOW_DATA_RATE_OPT_ON | SX1278_AGC_AUTO_ON, 3, 2);
+to
+write_register(SX1278_REG_MODEM_CONFIG_3, SX1278_LOW_DATA_RATE_OPT_OFF | SX1278_AGC_AUTO_ON, 3, 2);
+So as tobe compatible with receiver, which does not use low data rate
