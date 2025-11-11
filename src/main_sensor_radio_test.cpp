@@ -68,6 +68,7 @@ void setup()
     pinMode(led_pin, OUTPUT);
     digitalWrite(led_pin, LOW);
     radio.begin();
+    delay(50);//added delay not to overfill TX buffer
 }
 
 void loop()

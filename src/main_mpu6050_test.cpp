@@ -1,3 +1,6 @@
+
+//Sketch based on https://github.com/CarbonAeronautics/Part-XIV-MeasureAngles
+
 #include <Arduino.h>
 #include <Wire.h>
 
