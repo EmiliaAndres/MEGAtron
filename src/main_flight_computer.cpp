@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <CanSatKit.h>  
 #include <Wire.h>
+#include <TinyGPSPlus.h>
 //ForSDcard
 #include <SPI.h>
 #include <SD.h>
@@ -18,6 +19,9 @@
 
 //Create BMP280 sensor object
 CanSatKit::BMP280 bmp;
+
+//Create GPS object
+TinyGPSPlus gps;
 
 //SD card SS pin
 const int chipSelect = 11;
@@ -81,14 +85,17 @@ void kalman_1d(float KalmanState, float KalmanUncertainty, float KalmanInput, fl
 void gyro_init (void);
 //Pulls data from IMU
 void gyro_update (void);
+void log_gps_data(void);
 unsigned long IMU_handler (void);//returns timestamp
 unsigned long Baro_handler (void);
 void MiscTasks();
 File IMUlog;//file for logging pitch and roll
 File BARlog;//file for logging pressure
+File GPSlog;//file for logging GPS data
 
 void setup() {
-
+  //Serial1 for GPS1
+  Serial1.begin(9600);
   SerialUSB.begin(BAUDRATE);
   SerialUSB.print("Serial working on: ");
   SerialUSB.print(BAUDRATE);
@@ -107,7 +114,7 @@ void setup() {
 
   if (!SD.begin(chipSelect)) {
     SerialUSB.println("initialization failed.");
-    while (true);
+    //while (true);
   }
 
   SerialUSB.println("SD card initialization done.");
@@ -117,10 +124,19 @@ void setup() {
   BARlog = SD.open("barlog.csv", FILE_WRITE);
   BARlog.println("timestamp[us];pressure[hPa];temperature[C]");
   BARlog.close();
+  GPSlog = SD.open("gpslog.csv", FILE_WRITE);
+  GPSlog.println("time;lat;long;alt");
+  GPSlog.close();
 
 }
 
 void loop() {
+
+  //Encode incoming Gps data
+  while(Serial1.available() > 0){
+    gps.encode(Serial1.read()); 
+  }
+
   unsigned long now = micros();
   //Apogeedetectioncode
   //radioreccode
@@ -249,6 +265,14 @@ void MiscTasks() {
   BARlog.println(" ");
   #endif
   BARlog.close();
+
+  //Log GPS data to SD card
+  log_gps_data();
+  //Check if GPS is connected
+  if (millis() > 5000 && gps.charsProcessed() < 10) {
+	SerialUSB.println(F("No GPS detected: check wiring."));
+	//while(true);
+	}
 }
 
 
@@ -397,4 +421,48 @@ void gyro_init (void) {
   RateCalibrationYaw /= NO_CAL_SAMPLES;
   digitalWrite(13, LOW);  //calibration complete, turn off the diode
   LoopTimer = micros();
+}
+
+void log_gps_data(void) {
+
+  //make a string for assembling the data to log:
+  String dataString = "";
+
+  if (gps.time.isValid()) {
+		dataString += gps.time.hour();
+		dataString += ":";
+		dataString +=	gps.time.minute();
+		dataString += ":";
+		dataString += gps.time.second();
+    dataString += ";";
+	} else {
+    dataString += "INV TIME;";
+	}
+
+	if (gps.location.isValid()) {
+		dataString += String(gps.location.lat(), 6);
+		dataString += ";";
+		dataString += String(gps.location.lng(), 6);
+    dataString += ";";
+	} else {
+		dataString += "INV LAT;INV LON;";
+	}
+  
+  if(gps.altitude.isValid()){
+    dataString += gps.altitude.meters();
+  } else {
+    dataString += "INV ALT;";
+  }
+
+  GPSlog = SD.open("gpslog.csv", FILE_WRITE);
+
+  // if the file is available, write to it:
+  if (GPSlog) {
+    GPSlog.println(dataString);
+    GPSlog.close();
+  }
+  else {
+    SerialUSB.println("error opening datalog.csv");
+  }
+//Data format :Time/LAT/LONG/ALT
 }

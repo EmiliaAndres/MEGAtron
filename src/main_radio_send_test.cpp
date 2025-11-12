@@ -14,7 +14,7 @@ CanSatKit::Radio radio(CanSatKit::Pins::Radio::ChipSelect,
             CanSatKit::SpreadingFactor_9,
             CanSatKit::CodingRate_4_8);
 
-//void setup()
+void setup()
 {
     SerialUSB.begin(115200);
     pinMode(led_pin, OUTPUT);
