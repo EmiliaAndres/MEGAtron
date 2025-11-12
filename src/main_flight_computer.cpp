@@ -1,6 +1,7 @@
 //Prototype of a simple scheduler with 3 task frequencies (100hz - IMU + Kalman / 15hz - BAROMETER / 1hz - SDcard,GPS,etc.) 
 #define ENDLINE_AFTER_IMU_LOG 0
 #define ENDLINE_AFTER_BAR_LOG 0
+#define GYRO_SERIAL_PLOTTER 1
 #define BAUDRATE 57600
 
 #include <Arduino.h>
@@ -47,6 +48,7 @@ int BARindex = 0;
 struct BARReading {
   unsigned long timestamp;
   double pressure;
+  double temperature;
 };
 unsigned long last_BAR_SD_timestamp;
 volatile BARReading BARTable[15];
@@ -113,7 +115,7 @@ void setup() {
   IMUlog.println("timestamp[us];pitch[deg];roll[deg]");
   IMUlog.close();
   BARlog = SD.open("barlog.csv", FILE_WRITE);
-  BARlog.println("timestamp[us];pressure[hPa]");
+  BARlog.println("timestamp[us];pressure[hPa];temperature[C]");
   BARlog.close();
 
 }
@@ -152,6 +154,7 @@ void loop() {
 
     BARTable[BARindex].timestamp = Baro_handler();
     BARTable[BARindex].pressure = BMP280_Pres;
+    BARTable[BARindex].temperature = BMP280_Temp;
 
     BARindex = (BARindex + 1) % BAR_BUFFER_SIZE;//index incrementation
 ;
@@ -236,7 +239,9 @@ void MiscTasks() {
     
     BARlog.print(SafeBARTable[read_index].timestamp);
     BARlog.print(";");
-    BARlog.println(SafeBARTable[read_index].pressure);
+    BARlog.print(SafeBARTable[read_index].pressure);
+    BARlog.print(";");
+    BARlog.println(SafeBARTable[read_index].temperature);
   }
   last_BAR_SD_timestamp = SafeBARTable[(bar_start_index + BAR_BUFFER_SIZE-1) % BAR_BUFFER_SIZE].timestamp;
 
@@ -268,13 +273,17 @@ unsigned long IMU_handler (void) {
   KalmanAnglePitch = Kalman1DOutput[0];
   KalmanUncertaintyAnglePitch = Kalman1DOutput[1];
 
-  /*
+  #if GYRO_SERIAL_PLOTTER
+  //*
   //Print Roll and Pitch in degrees
   SerialUSB.print("Roll = ");
   SerialUSB.print(KalmanAngleRoll);
+  SerialUSB.print(",");
   SerialUSB.print("Pitch = ");
   SerialUSB.println(KalmanAnglePitch);
   //*/
+  #endif
+
   return time;
 }
 
