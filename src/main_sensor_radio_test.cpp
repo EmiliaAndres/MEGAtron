@@ -60,7 +60,7 @@ void send_frame(float payloadValue,int sens_id)
 }
 
 
-void setup()
+//void setup()
 {
     SerialUSB.begin(115200);
     while(!bmp.begin()){};

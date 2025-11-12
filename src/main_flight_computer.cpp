@@ -72,21 +72,19 @@ uint32_t LoopTimer;
 float KalmanAngleRoll = 0, KalmanUncertaintyAngleRoll = 2 * 2;    //0 degrees - predicted initial angle
 float KalmanAnglePitch = 0, KalmanUncertaintyAnglePitch = 2 * 2;  //2 degrees - predicted initial uncertaininty
 
-float Kalman_dt = 0.01;//This time is equal to the 1/frequency of the kalman filter and IMU
-
 //initialize an array as an output of the Kalman filter
 //{0,0} 0-angle prediction 0-uncertainty of the prediction
 float Kalman1DOutput[] = { 0, 0 };
 
 //Initialize funcion with Kalman equations
 //that calculates predicted angle and uncertainty
-void kalman_1d(float KalmanState, float KalmanUncertainty, float KalmanInput, float KalmanMeasurement);
+void kalman_1d(float KalmanState, float KalmanUncertainty, float KalmanInput, float KalmanMeasurement, float dt_s);
 //Initializes and calibrates the gyro
 void gyro_init (void);
 //Pulls data from IMU
 void gyro_update (void);
 void log_gps_data(void);
-unsigned long IMU_handler (void);//returns timestamp
+unsigned long IMU_handler (unsigned long Kalman_dt);//returns timestamp
 unsigned long Baro_handler (void);
 void MiscTasks();
 File IMUlog;//file for logging pitch and roll
@@ -94,6 +92,9 @@ File BARlog;//file for logging pressure
 File GPSlog;//file for logging GPS data
 
 void setup() {
+
+  pinMode(4,OUTPUT);//buzzer
+  tone(4,2000,200);
   //Serial1 for GPS1
   Serial1.begin(9600);
   SerialUSB.begin(BAUDRATE);
@@ -127,7 +128,7 @@ void setup() {
   GPSlog = SD.open("gpslog.csv", FILE_WRITE);
   GPSlog.println("time;lat;long;alt");
   GPSlog.close();
-
+  tone(4,4000,200);
 }
 
 void loop() {
@@ -142,9 +143,10 @@ void loop() {
   //radioreccode
 
   if (now - IMU_lasttime >= IMU_dt) {
+    unsigned long Kalman_dt_micros = now - IMU_lasttime;//dynamic dt for Kalman
     IMU_lasttime = now;
 
-    IMUTable[IMUindex].timestamp = IMU_handler ();
+    IMUTable[IMUindex].timestamp = IMU_handler (Kalman_dt_micros);
     IMUTable[IMUindex].pitch = KalmanAnglePitch;
     IMUTable[IMUindex].roll = KalmanAngleRoll;
     //SerialUSB.println(IMUindex);
@@ -173,8 +175,7 @@ void loop() {
     BARTable[BARindex].temperature = BMP280_Temp;
 
     BARindex = (BARindex + 1) % BAR_BUFFER_SIZE;//index incrementation
-;
-    //readBaro();
+//;
   }//This gets called ~15 Hz
 
   if (now - Misc_lasttime >= Misc_dt) {
@@ -276,7 +277,7 @@ void MiscTasks() {
 }
 
 
-unsigned long IMU_handler (void) {
+unsigned long IMU_handler (unsigned long Kalman_dt) {
 
   unsigned long time;
   gyro_update();
@@ -288,12 +289,15 @@ unsigned long IMU_handler (void) {
   PitchRate -= RateCalibrationPitch;
   YawRate -= RateCalibrationYaw;
 
+  //Kalman_dt conversion from [us] to [s]
+  float dt_seconds = (float)Kalman_dt / 1000000.0f;
+
   //1st Kalman filter for roll angle
-  kalman_1d(KalmanAngleRoll, KalmanUncertaintyAngleRoll, RollRate, AngleRoll);
+  kalman_1d(KalmanAngleRoll, KalmanUncertaintyAngleRoll, RollRate, AngleRoll, dt_seconds);
   KalmanAngleRoll = Kalman1DOutput[0];
   KalmanUncertaintyAngleRoll = Kalman1DOutput[1];
   //2nd Kalman filter for pitch angle
-  kalman_1d(KalmanAnglePitch, KalmanUncertaintyAnglePitch, PitchRate, AnglePitch);
+  kalman_1d(KalmanAnglePitch, KalmanUncertaintyAnglePitch, PitchRate, AnglePitch, dt_seconds);
   KalmanAnglePitch = Kalman1DOutput[0];
   KalmanUncertaintyAnglePitch = Kalman1DOutput[1];
 
@@ -321,9 +325,9 @@ unsigned long Baro_handler (void) {
 }
 
 
-void kalman_1d (float KalmanState, float KalmanUncertainty, float KalmanInput, float KalmanMeasurement) {
-  KalmanState = KalmanState + Kalman_dt * KalmanInput;
-  KalmanUncertainty = KalmanUncertainty + Kalman_dt * Kalman_dt * Q_PARAM * Q_PARAM;
+void kalman_1d (float KalmanState, float KalmanUncertainty, float KalmanInput, float KalmanMeasurement, float dt_s) {
+  KalmanState = KalmanState + dt_s * KalmanInput;
+  KalmanUncertainty = KalmanUncertainty + dt_s * dt_s * Q_PARAM * Q_PARAM;
   float KalmanGain = KalmanUncertainty * 1 / (1 * KalmanUncertainty + R_PARAM * R_PARAM);
   KalmanState = KalmanState + KalmanGain * (KalmanMeasurement - KalmanState);
   KalmanUncertainty = (1 - KalmanGain) * KalmanUncertainty;
@@ -394,7 +398,6 @@ void gyro_update (void) {
 
 void gyro_init (void) {
 
-  pinMode(4,OUTPUT);//buzzer
   pinMode(13, OUTPUT);
   digitalWrite(13, HIGH);  //Turn the diode on until calibration is complete
 

@@ -69,7 +69,7 @@ void gyro_signals(void){
 
 }
 
-void setup() {
+//void setup() {
 
   SerialUSB.begin(57600);
   pinMode(13,OUTPUT);
