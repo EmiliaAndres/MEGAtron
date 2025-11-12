@@ -1,15 +1,23 @@
 //Prototype of a simple scheduler with 3 task frequencies (100hz - IMU + Kalman / 15hz - BAROMETER / 1hz - SDcard,GPS,etc.) 
 #define ENDLINE_AFTER_IMU_LOG 0
+#define ENDLINE_AFTER_BAR_LOG 0
+#define BAUDRATE 57600
 
-#include <Arduino.h>  
+#include <Arduino.h>
+#include <CanSatKit.h>  
 #include <Wire.h>
 //ForSDcard
 #include <SPI.h>
 #include <SD.h>
 #define BUFFER_SIZE 100
+#define BAR_BUFFER_SIZE 15
 #define Q_PARAM 10
 #define R_PARAM 1
 #define NO_CAL_SAMPLES 2000  //Number of samples taken per axis while calibrating the Gyro
+
+//Create BMP280 sensor object
+CanSatKit::BMP280 bmp;
+
 //SD card SS pin
 const int chipSelect = 11;
 
@@ -22,7 +30,7 @@ const unsigned long IMU_dt = 10000;   //100 Hz -> 10 ms
 const unsigned long Baro_dt = 66666;  // 15 Hz -> 66.666 ms
 const unsigned long Misc_dt = 1000000;//  1 Hz -> 1000 ms
 
-//Rotating array
+//Rotating array for IMU data
 int IMUindex = 0;//index that tells us to which row we are writing to
 struct IMUReading {//Structure of 1 row of IMUTable array
   unsigned long timestamp; // Integer for micros() (4 bytes)
@@ -34,6 +42,16 @@ unsigned long last_IMU_SD_timestamp;
 //Make a 100 element array called IMUTable of those records
 volatile IMUReading IMUTable[100];
 
+//Rotating array for Barometer data
+int BARindex = 0;
+struct BARReading {
+  unsigned long timestamp;
+  double pressure;
+};
+unsigned long last_BAR_SD_timestamp;
+volatile BARReading BARTable[15];
+double BMP280_Temp;//temperature and pressure from bmp280
+double BMP280_Pres;
 
 //Gyro variables
 float RollRate, PitchRate, YawRate;
@@ -62,26 +80,41 @@ void gyro_init (void);
 //Pulls data from IMU
 void gyro_update (void);
 unsigned long IMU_handler (void);//returns timestamp
-void Baro_handler (void);
+unsigned long Baro_handler (void);
 void MiscTasks();
 File IMUlog;//file for logging pitch and roll
+File BARlog;//file for logging pressure
 
 void setup() {
 
-  SerialUSB.begin(57600);
+  SerialUSB.begin(BAUDRATE);
+  SerialUSB.print("Serial working on: ");
+  SerialUSB.print(BAUDRATE);
+  SerialUSB.println("Baudrate");
   gyro_init();//declares 4 and 13 as output pins
   
+  if(!bmp.begin()) {
+    SerialUSB.println("BMP sensor init failed!");
+  } else {
+    SerialUSB.println("BMP sensor initialized successfully!");
+  }
+  bmp.setOversampling(2);
+
+
   SerialUSB.print("Initializing SD card...");
 
   if (!SD.begin(chipSelect)) {
-    SerialUSB.println("initialization failed. Things to check:");
+    SerialUSB.println("initialization failed.");
     while (true);
   }
 
-  SerialUSB.println("initialization done.");
+  SerialUSB.println("SD card initialization done.");
   IMUlog = SD.open("imulog.csv", FILE_WRITE);
   IMUlog.println("timestamp[us];pitch[deg];roll[deg]");
   IMUlog.close();
+  BARlog = SD.open("barlog.csv", FILE_WRITE);
+  BARlog.println("timestamp[us];pressure[hPa]");
+  BARlog.close();
 
 }
 
@@ -102,20 +135,26 @@ void loop() {
       IMUindex++;
     }
     else
-    { SerialUSB.println();
+    {
       IMUindex = 0;
       for(int i = 0;i<100;i++)
       {
+        /**
         SerialUSB.print(IMUTable[i].timestamp);
         SerialUSB.print(" - ");
-        SerialUSB.println(IMUTable[i].pitch);
-      } SerialUSB.println();
+        SerialUSB.println(IMUTable[i].pitch);//*/
+      } //SerialUSB.println();
     }
   }//This gets called ~100 Hz
 
   if (now - Baro_lasttime >= Baro_dt) {
     Baro_lasttime = now;
-    Baro_handler();
+
+    BARTable[BARindex].timestamp = Baro_handler();
+    BARTable[BARindex].pressure = BMP280_Pres;
+
+    BARindex = (BARindex + 1) % BAR_BUFFER_SIZE;//index incrementation
+;
     //readBaro();
   }//This gets called ~15 Hz
 
@@ -127,7 +166,7 @@ void loop() {
 }
 
 void MiscTasks() {
-  
+  //WRITE PITCH AND ROLL DATA TO an SD CARD
   //Declaration of An Array that will be filled with data copied from IMUtable
   //We copy data and disable interrupts, to avoid writing data to SDcard while an array can be modified during the operation
   IMUReading SafeIMUTable[BUFFER_SIZE];
@@ -142,7 +181,6 @@ void MiscTasks() {
   index_copy = IMUindex;
   //Enable interrupts back
   __enable_irq();
-  
   //Calculate start index
   int start_index = (index_copy) % BUFFER_SIZE;//redundant modulo operator is not needed here
   
@@ -175,12 +213,43 @@ void MiscTasks() {
   #endif
   IMUlog.close();
 
+
+  //WRITE PRESSURE DATA TO SD
+  BARReading SafeBARTable[BAR_BUFFER_SIZE];
+  int bar_index_copy;
+  __disable_irq();
+  memcpy(SafeBARTable, (const void*)BARTable, sizeof(BARReading) * BAR_BUFFER_SIZE);
+  bar_index_copy = BARindex;
+  __enable_irq();
+  int bar_start_index = (bar_index_copy) % BAR_BUFFER_SIZE;
+
+  BARlog = SD.open("barlog.csv", FILE_WRITE);
+
+    for(int i = 0; i < BAR_BUFFER_SIZE; i++)
+  {
+    int read_index = (bar_start_index + i) % BAR_BUFFER_SIZE;
+
+    if(!SafeBARTable[read_index].timestamp>0)
+    continue;
+    if(last_BAR_SD_timestamp>=SafeBARTable[read_index].timestamp)
+    continue;
+    
+    BARlog.print(SafeBARTable[read_index].timestamp);
+    BARlog.print(";");
+    BARlog.println(SafeBARTable[read_index].pressure);
+  }
+  last_BAR_SD_timestamp = SafeBARTable[(bar_start_index + BAR_BUFFER_SIZE-1) % BAR_BUFFER_SIZE].timestamp;
+
+  #if ENDLINE_AFTER_BAR_LOG
+  BARlog.println(" ");
+  #endif
+  BARlog.close();
 }
 
 
 unsigned long IMU_handler (void) {
 
-  int time;
+  unsigned long time;
   gyro_update();
 
   //Get timestamp
@@ -210,7 +279,12 @@ unsigned long IMU_handler (void) {
 }
 
 
-void Baro_handler (void) {
+unsigned long Baro_handler (void) {
+
+  unsigned long time;
+  time = micros();
+  bmp.measureTemperatureAndPressure(BMP280_Temp, BMP280_Pres);
+  return time;
 }
 
 
