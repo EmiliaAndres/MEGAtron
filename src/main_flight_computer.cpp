@@ -1,30 +1,38 @@
 //Prototype of a simple scheduler with 3 task frequencies (100hz - IMU + Kalman / 15hz - BAROMETER / 1hz - SDcard,GPS,etc.) 
+#define ENDLINE_AFTER_IMU_LOG 0
+
 #include <Arduino.h>  
 #include <Wire.h>
-
+//ForSDcard
+#include <SPI.h>
+#include <SD.h>
+#define BUFFER_SIZE 100
 #define Q_PARAM 10
 #define R_PARAM 1
 #define NO_CAL_SAMPLES 2000  //Number of samples taken per axis while calibrating the Gyro
+//SD card SS pin
+const int chipSelect = 11;
 
 //Scheduler variables
-unsigned long IMU_lasttime = 0; //100hz
-unsigned long Baro_lasttime = 0;//15hz
-unsigned long Misc_lasttime = 0;//1hz
+unsigned long IMU_lasttime = 0;
+unsigned long Baro_lasttime = 0;
+unsigned long Misc_lasttime = 0;
 //Intervals between executions [us]
-const unsigned long IMU_dt = 10000;   //100 Hz → 10 ms
-const unsigned long Baro_dt = 66666;  // 15 Hz → 66.666 ms
-const unsigned long Misc_dt = 1000000;//  1 Hz → 1000 ms
+const unsigned long IMU_dt = 10000;   //100 Hz -> 10 ms
+const unsigned long Baro_dt = 66666;  // 15 Hz -> 66.666 ms
+const unsigned long Misc_dt = 1000000;//  1 Hz -> 1000 ms
 
 //Rotating array
-int IMUindex = 0;//index that tells us to which row we are writing
-struct IMUReading {//Structure of 1 row of IMUdata
-  unsigned long timestamp; // Liczba całkowita dla czasu (4 bajty)
-  float pitch;             // Liczba zmiennoprzecinkowa (4 bajty)
-  float roll;              // Liczba zmiennoprzecinkowa (4 bajty)
+int IMUindex = 0;//index that tells us to which row we are writing to
+struct IMUReading {//Structure of 1 row of IMUTable array
+  unsigned long timestamp; // Integer for micros() (4 bytes)
+  float pitch;             // (4 bytes)
+  float roll;              // (4 bytes)
 };
-unsigned long timestamp;
+//timestamp for last imu element saved to the SD
+unsigned long last_IMU_SD_timestamp;
 //Make a 100 element array called IMUTable of those records
-IMUReading IMUTable[100];
+volatile IMUReading IMUTable[100];
 
 
 //Gyro variables
@@ -55,11 +63,25 @@ void gyro_init (void);
 void gyro_update (void);
 unsigned long IMU_handler (void);//returns timestamp
 void Baro_handler (void);
+void MiscTasks();
+File IMUlog;//file for logging pitch and roll
 
 void setup() {
 
   SerialUSB.begin(57600);
-  gyro_init();//declares 4 and 13 output pins
+  gyro_init();//declares 4 and 13 as output pins
+  
+  SerialUSB.print("Initializing SD card...");
+
+  if (!SD.begin(chipSelect)) {
+    SerialUSB.println("initialization failed. Things to check:");
+    while (true);
+  }
+
+  SerialUSB.println("initialization done.");
+  IMUlog = SD.open("imulog.csv", FILE_WRITE);
+  IMUlog.println("timestamp[us];pitch[deg];roll[deg]");
+  IMUlog.close();
 
 }
 
@@ -67,7 +89,6 @@ void loop() {
   unsigned long now = micros();
   //Apogeedetectioncode
   //radioreccode
-
 
   if (now - IMU_lasttime >= IMU_dt) {
     IMU_lasttime = now;
@@ -81,28 +102,78 @@ void loop() {
       IMUindex++;
     }
     else
-    {SerialUSB.println();
+    { SerialUSB.println();
       IMUindex = 0;
       for(int i = 0;i<100;i++)
       {
         SerialUSB.print(IMUTable[i].timestamp);
         SerialUSB.print(" - ");
         SerialUSB.println(IMUTable[i].pitch);
-      }SerialUSB.println();
+      } SerialUSB.println();
     }
   }//This gets called ~100 Hz
-
 
   if (now - Baro_lasttime >= Baro_dt) {
     Baro_lasttime = now;
     Baro_handler();
     //readBaro();
-  }
+  }//This gets called ~15 Hz
 
   if (now - Misc_lasttime >= Misc_dt) {
     Misc_lasttime = now;
-    //MiscTasks();
+    MiscTasks();
+  }//This gets called ~1Hz
+
+}
+
+void MiscTasks() {
+  
+  //Declaration of An Array that will be filled with data copied from IMUtable
+  //We copy data and disable interrupts, to avoid writing data to SDcard while an array can be modified during the operation
+  IMUReading SafeIMUTable[BUFFER_SIZE];
+
+  //Atomic copy - fast copy of the data from volatile IMUtable
+  int index_copy;
+  //Block interrupts
+  __disable_irq();
+  //Copy the entire IMUtable buffer
+  memcpy(SafeIMUTable, (const void*)IMUTable, sizeof(IMUReading) * BUFFER_SIZE);
+  //Copy the index pointing at the next element that is going to be written
+  index_copy = IMUindex;
+  //Enable interrupts back
+  __enable_irq();
+  
+  //Calculate start index
+  int start_index = (index_copy) % BUFFER_SIZE;//redundant modulo operator is not needed here
+  
+  //Save data from our safe copy of the IMUtable - SafeImuTable
+  IMUlog = SD.open("imulog.csv", FILE_WRITE);
+
+  for(int i = 0; i < BUFFER_SIZE; i++)
+  {
+    int read_index = (start_index + i) % BUFFER_SIZE;
+
+    //prevent zeros from array initialization from saving to SD
+    if(!SafeIMUTable[read_index].timestamp>0)
+    continue;
+    //skip duplicate records
+    if(last_IMU_SD_timestamp>=SafeIMUTable[read_index].timestamp)
+    continue;
+    
+    // Write data to SD from SafeIMUTable
+    IMUlog.print(SafeIMUTable[read_index].timestamp);
+    IMUlog.print(";");
+    IMUlog.print(SafeIMUTable[read_index].pitch);
+    IMUlog.print(";");
+    IMUlog.println(SafeIMUTable[read_index].roll);
   }
+  //get the timestamp of the last written row
+  last_IMU_SD_timestamp = SafeIMUTable[(start_index + BUFFER_SIZE-1) % BUFFER_SIZE].timestamp;
+
+  #if ENDLINE_AFTER_IMU_LOG
+  IMUlog.println(" ");
+  #endif
+  IMUlog.close();
 
 }
 
