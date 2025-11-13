@@ -1,12 +1,15 @@
+
 #include <Arduino.h>
 #include <space_protocol.h>
 // include CanSatKit library used for pressure sensor
 #include <CanSatKit.h>
 
-#define BLINKING 0
+#define NUM_FRAMES 2
+#define TOTAL_PACKET_LENGTH (NUM_FRAMES * FRAME_BYTE_LENGTH) 
 
 bool led_state = false;
 const int led_pin = 13;
+double T, P;
 
 CanSatKit::Radio radio(CanSatKit::Pins::Radio::ChipSelect,
             CanSatKit::Pins::Radio::DIO0,
@@ -18,18 +21,15 @@ CanSatKit::Radio radio(CanSatKit::Pins::Radio::ChipSelect,
 // BMP280 is a pressure sensor, create the sensor object
 CanSatKit::BMP280 bmp;
 
-float get_bmp280_data(bool pressure)
+uint8_t packet[NUM_FRAMES][FRAME_BYTE_LENGTH];
+
+void get_bmp280_data(void)
 {
-  double T, P;
   // start measurement, wait for result and save results in T and P variables 
   bmp.measureTemperatureAndPressure(T, P);
-  if(pressure)
-  return P;
-  else
-  return T;
 }
-
-void send_frame(float payloadValue,int sens_id)
+//send_frame
+void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer)
 {
 
     uint32_t floatBits;
@@ -47,17 +47,11 @@ void send_frame(float payloadValue,int sens_id)
         0x01, // Sensor read 0x01 operation
         floatBits);
 
-    uint8_t packet[FRAME_BYTE_LENGTH];
-    encode_frame(&frame, packet);
+    encode_frame(&frame, output_buffer);
 
-    //SerialUSB.write(packet, FRAME_BYTE_LENGTH);
-    //SerialUSB.flush();
-    radio.transmit(packet, FRAME_BYTE_LENGTH);
-    #if BLINKING
-    digitalWrite(led_pin, led_state);
-    led_state = !led_state;//blink every 2 transmissions
-    #endif
 }
+
+
 
 
 void setup()
@@ -74,8 +68,16 @@ void setup()
 void loop()
 {
 
-    send_frame(get_bmp280_data(0),1);//send temp
-    send_frame(get_bmp280_data(1),2);//send pressure
+    get_bmp280_data();//get temperature and pressure
+
+    pack_frame(T,1,packet[0]);
+    pack_frame(P,2,packet[1]);
+    radio.transmit((uint8_t*)packet, TOTAL_PACKET_LENGTH);
+
+    //SerialUSB.write((uint8_t*)packet, TOTAL_PACKET_LENGTH);
+    //SerialUSB.flush();
+    delay(1000);
+
     static bool wait = false;
 
     // Delay before sending the next frame
