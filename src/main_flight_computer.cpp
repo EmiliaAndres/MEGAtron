@@ -4,7 +4,7 @@
 #define GYRO_SERIAL_PLOTTER 1
 #define BAUDRATE 57600
 
-#define NUM_FRAMES 7
+#define NUM_FRAMES 8
 #define TOTAL_PACKET_LENGTH (NUM_FRAMES * FRAME_BYTE_LENGTH) 
 #include <space_protocol.h>
 #include <Arduino.h>
@@ -21,7 +21,7 @@
 #define R_PARAM 1
 #define NO_CAL_SAMPLES 2000  //Number of samples taken per axis while calibrating the Gyro
 
-void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer);
+void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer,uint8_t data_type = DATA_FLOAT);
 //Buffer for Lora Transmission
 uint8_t packet[NUM_FRAMES][FRAME_BYTE_LENGTH];
 
@@ -103,8 +103,8 @@ void setup() {
 
   pinMode(4,OUTPUT);//buzzer
   tone(4,2000,200);
-  //Serial1 for GPS1
-  Serial1.begin(9600);
+  //Serial for GPS1
+  Serial.begin(9600);
   SerialUSB.begin(BAUDRATE);
   SerialUSB.print("Serial working on: ");
   SerialUSB.print(BAUDRATE);
@@ -156,8 +156,8 @@ void setup() {
 void loop() {
 
   //Encode incoming Gps data
-  while(Serial1.available() > 0){
-    gps.encode(Serial1.read()); 
+  while(Serial.available() > 0){
+    gps.encode(Serial.read()); 
   }
 
   unsigned long now = micros();
@@ -305,6 +305,8 @@ void MiscTasks() {
   pack_frame(SafeIMUTable[index_copy].roll,5,packet[4]);
   pack_frame(SafeBARTable[bar_index_copy].temperature,6,packet[5]);
   pack_frame(gps.altitude.meters(),7,packet[6]);
+  pack_frame(gps.satellites.value(),8,packet[7]);
+
   //Lora asynchronus transmission
   LoRa.beginPacket();
   LoRa.write((uint8_t*)packet, TOTAL_PACKET_LENGTH);
@@ -504,8 +506,8 @@ void log_gps_data(void) {
   }
 //Data format :Time/LAT/LONG/ALT
 }
-
-void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer)
+//f.e. SPACE_PROTOCOL_H::DATA_UINT8
+void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer,uint8_t data_type)
 {
 
     uint32_t floatBits;
@@ -519,7 +521,7 @@ void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer)
         BOARD_AGATKA,
         DEVICE_SENSOR,
         sens_id, // Sensor ID
-        DATA_FLOAT,
+        data_type,
         0x01, // Sensor read 0x01 operation
         floatBits);
 
