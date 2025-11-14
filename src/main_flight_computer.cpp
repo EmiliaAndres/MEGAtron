@@ -4,8 +4,12 @@
 #define GYRO_SERIAL_PLOTTER 1
 #define BAUDRATE 57600
 
+#define NUM_FRAMES 2
+#define TOTAL_PACKET_LENGTH (NUM_FRAMES * FRAME_BYTE_LENGTH) 
+#include <space_protocol.h>
 #include <Arduino.h>
 #include <CanSatKit.h>  
+#include <LoRa.h>
 #include <Wire.h>
 #include <TinyGPSPlus.h>
 //ForSDcard
@@ -16,6 +20,10 @@
 #define Q_PARAM 10
 #define R_PARAM 1
 #define NO_CAL_SAMPLES 2000  //Number of samples taken per axis while calibrating the Gyro
+
+void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer);
+//Buffer for Lora Transmission
+uint8_t packet[NUM_FRAMES][FRAME_BYTE_LENGTH];
 
 //Create BMP280 sensor object
 CanSatKit::BMP280 bmp;
@@ -128,6 +136,20 @@ void setup() {
   GPSlog = SD.open("gpslog.csv", FILE_WRITE);
   GPSlog.println("time;lat;long;alt");
   GPSlog.close();
+
+  //LoRa configuration
+  LoRa.setPins(10, -1, 12);
+  LoRa.setSPIFrequency(4E6);
+  if (!LoRa.begin(433E6)) {
+      SerialUSB.println("Error initializing SX1278 module");
+  }
+  LoRa.setSignalBandwidth(125E3);
+  LoRa.setSpreadingFactor(9);
+  LoRa.setCodingRate4(8);
+  LoRa.setSyncWord(0x12);
+  LoRa.setPreambleLength(8);
+  LoRa.enableCrc();
+
   tone(4,4000,200);
 }
 
@@ -273,7 +295,15 @@ void MiscTasks() {
   if (millis() > 5000 && gps.charsProcessed() < 10) {
 	SerialUSB.println(F("No GPS detected: check wiring."));
 	//while(true);
-	}
+  }
+
+  //radio
+  pack_frame(SafeBARTable[BARindex-1].temperature,1,packet[0]); //latest temp measurement
+  pack_frame(SafeBARTable[BARindex-1].pressure,2,packet[1]);
+  //Lora asynchronus transmission
+  LoRa.beginPacket();
+  LoRa.write((uint8_t*)packet, TOTAL_PACKET_LENGTH);
+  LoRa.endPacket(true);
 }
 
 
@@ -468,4 +498,26 @@ void log_gps_data(void) {
     SerialUSB.println("error opening datalog.csv");
   }
 //Data format :Time/LAT/LONG/ALT
+}
+
+void pack_frame(float payloadValue,int sens_id,uint8_t* output_buffer)
+{
+
+    uint32_t floatBits;
+    memset(&floatBits, 0, sizeof(floatBits));
+    memcpy(&floatBits, &payloadValue, sizeof(floatBits));
+
+    Frame frame = create_frame(
+        BOARD_GRAZYNA,
+        PRIORITY_LOW,
+        ACTION_FEED,
+        BOARD_AGATKA,
+        DEVICE_SENSOR,
+        sens_id, // Sensor ID
+        DATA_FLOAT,
+        0x01, // Sensor read 0x01 operation
+        floatBits);
+
+    encode_frame(&frame, output_buffer);
+
 }
