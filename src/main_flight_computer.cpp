@@ -4,7 +4,7 @@
 #define GYRO_SERIAL_PLOTTER 1
 #define BAUDRATE 57600
 
-#define NUM_FRAMES 2
+#define NUM_FRAMES 7
 #define TOTAL_PACKET_LENGTH (NUM_FRAMES * FRAME_BYTE_LENGTH) 
 #include <space_protocol.h>
 #include <Arduino.h>
@@ -298,8 +298,13 @@ void MiscTasks() {
   }
 
   //radio
-  pack_frame(SafeBARTable[BARindex-1].temperature,1,packet[0]); //latest temp measurement
-  pack_frame(SafeBARTable[BARindex-1].pressure,2,packet[1]);
+  pack_frame(gps.location.lat(),1,packet[0]);
+  pack_frame(gps.location.lng(),2,packet[1]);
+  pack_frame(SafeBARTable[bar_index_copy].pressure,3,packet[2]);
+  pack_frame(SafeIMUTable[index_copy].pitch,4,packet[3]);
+  pack_frame(SafeIMUTable[index_copy].roll,5,packet[4]);
+  pack_frame(SafeBARTable[bar_index_copy].temperature,6,packet[5]);
+  pack_frame(gps.altitude.meters(),7,packet[6]);
   //Lora asynchronus transmission
   LoRa.beginPacket();
   LoRa.write((uint8_t*)packet, TOTAL_PACKET_LENGTH);
